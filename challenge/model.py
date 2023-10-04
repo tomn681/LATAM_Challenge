@@ -18,8 +18,46 @@ class DelayModel:
     def __init__(
         self
     ):
-        self._model = None # Model should be saved in this attribute.
-
+        """
+        DelayModel constructor.
+        
+        Selected Model: 
+            XGBoost with Feature Importance and with Balance
+        
+        Reason:
+            As we want to maximize the correctness of the model while
+            maximizing the rightness of it, we prefer paying more attention
+            to precision and recall values, specially the combination f1 for 
+            class delayed = 1.
+            In this way, we exclude models without balance. 
+            Considering the data scientist's comments, we exclude base models.
+            Finally we choose xg_boost with balance and feature importance due
+            to slightly better f1-score.
+        """
+        
+        self._model = None
+        
+    def create_model(
+        target: pd.DataFrame
+    ) -> None:
+        """
+        Create model using training data scaling.
+        
+        Args:
+            target (pd.DataFrame): Training targets (y_true)
+        
+        Returns:
+            None
+        """
+        n_y0 = len(target[target == 0])
+        n_y1 = len(target[target == 1])
+        
+        scale = n_y0/n_y1
+        
+        self._model = xgb.XGBClassifier(random_state=1, 
+                                        learning_rate=0.01, 
+                                        scale_pos_weight = scale)
+                                        
     def preprocess(
         self,
         data: pd.DataFrame,
@@ -71,6 +109,9 @@ class DelayModel:
             features (pd.DataFrame): preprocessed data.
             target (pd.DataFrame): target.
         """
+        if not self._model:
+            self.create_model(target)
+        
         x_train = features
         y_train = target
         
