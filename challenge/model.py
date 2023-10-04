@@ -41,22 +41,23 @@ class DelayModel:
         
         data['high_season'] = data['Fecha-I'].apply(self.is_high_season)
         
-        data['min_diff'] = data.apply(self.get_min_diff, axis = 1)
-        
-        threshold_in_minutes = 15
-        data['delay'] = np.where(data['min_diff'] > threshold_in_minutes, 1, 0)
-        
-        training_data = shuffle(data[['OPERA', 'MES', 'TIPOVUELO', 'SIGLADES', 
-                                'DIANOM', 'delay']], random_state = 111)
         features = pd.concat([
             pd.get_dummies(data['OPERA'], prefix = 'OPERA'),
             pd.get_dummies(data['TIPOVUELO'], prefix = 'TIPOVUELO'), 
             pd.get_dummies(data['MES'], prefix = 'MES')], 
             axis = 1
         )
-        target = data['delay']
         
-        return features, target
+        # Train/Test Mode
+        if target_column:
+            data['min_diff'] = data.apply(self.get_min_diff, axis = 1)
+            threshold_in_minutes = 15
+            data['delay'] = np.where(data['min_diff'] > threshold_in_minutes, 1, 0)
+            target = data['target_column']
+            return features, target
+        
+        # Predict Default
+        return features
 
     def fit(
         self,
@@ -70,12 +71,8 @@ class DelayModel:
             features (pd.DataFrame): preprocessed data.
             target (pd.DataFrame): target.
         """
-        x_train, x_test, y_train, y_test = train_test_split(features, 
-                                                            target, 
-                                                            test_size = 0.33, 
-                                                            random_state = 42)
-                                                            
-        print(f"train shape: {x_train.shape} | test shape: {x_test.shape}")
+        x_train = features
+        y_train = target
         
         self._model.fit(x_train, y_train)
         
@@ -94,7 +91,11 @@ class DelayModel:
         Returns:
             (List[int]): predicted targets.
         """
-        return
+        x_test = features
+        
+        y_preds = self._model.predict(x_test)
+        #y_preds = [1 if y_pred > 0.5 else 0 for y_pred in y_preds]
+        return y_preds
         
     @staticmethod
     def get_period_day(
@@ -171,6 +172,8 @@ class DelayModel:
             
             Args:
                 data (pd.DataFrame): raw data.
+                columns (List[str], optional): Columns to substract. 
+                                               Default: ['Fecha-O', 'Fecha-I']
                 
             Returns:
                 (np.float64): Difference in minutes.
@@ -181,18 +184,3 @@ class DelayModel:
             fecha_i = datetime.strptime(data[columns[1]], '%Y-%m-%d %H:%M:%S')
             min_diff = ((fecha_o - fecha_i).total_seconds())/60
             return min_diff
-            
-#        @staticmethod
-#        def get_delay(
-#            data: pd.DataFrame,
-#            min_diff: str = 'min_diff'
-#        ) -> np.int64:
-#            """
-#            Get if delayed.
-#            
-#            Args:
-#                data (pd.DataFrame): preprocessed data.
-#                
-#            Returns:
-#                (np.int64): Delayed flight [1] or Flight in time [0].
-#            """
