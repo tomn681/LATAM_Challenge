@@ -1,7 +1,7 @@
 import fastapi
 import pandas as pd
 
-from model import DelayModel
+from .model import DelayModel
 
 app = fastapi.FastAPI()
 
@@ -74,3 +74,4 @@ async def post_predict(json: dict) -> dict:
     return {
     	"predict": model.predict(data)
     }
+
