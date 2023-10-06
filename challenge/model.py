@@ -1,5 +1,10 @@
+import sys
+sys.path.append('../')
+
+import os
 import numpy as np
 import pandas as pd
+import xgboost as xgb
 import matplotlib.pyplot as plt
 import seaborn as sns
 import warnings
@@ -36,33 +41,93 @@ class DelayModel:
         """
         
         self._model = None
+        self.set_model()
         
-    def create_model(
-        target: pd.DataFrame
+        self.fitted_model = False
+        
+        self.top_10_features = [
+            "OPERA_Latin American Wings", 
+            "MES_7",
+            "MES_10",
+            "OPERA_Grupo LATAM",
+            "MES_12",
+            "TIPOVUELO_I",
+            "MES_4",
+            "MES_11",
+            "OPERA_Sky Airline",
+            "OPERA_Copa Air"
+        ]
+        
+    def set_model(
+        self,
+        target: pd.DataFrame = None
     ) -> None:
         """
-        Create model using training data scaling.
+        Set model using training data scaling.
         
         Args:
-            target (pd.DataFrame): Training targets (y_true)
+            target (pd.DataFrame, optional): Training targets for scaling 
+                                             (y_true). Defaults to no scaling.
         
         Returns:
             None
         """
-        n_y0 = len(target[target == 0])
-        n_y1 = len(target[target == 1])
+        scale = None
         
-        scale = n_y0/n_y1
+        if target is not None:
+            n_y0 = len(target[target["delay"] == 0])
+            n_y1 = len(target[target["delay"] == 1])
+            
+            scale = n_y0/n_y1
         
         self._model = xgb.XGBClassifier(random_state=1, 
                                         learning_rate=0.01, 
                                         scale_pos_weight = scale)
                                         
+        return
+                                        
+    def load_from_weights(
+        self,
+        path: str
+    ) -> None:
+        """
+        Load a pretrained model from weights.
+        
+        Args:
+            path (str): Weights location
+        
+        Returns:
+            None
+        """            
+        self._model.load_model(path)
+        
+        return
+    
+    def save_model(
+        self,
+        model_name: str = "XGBoost",
+        path: str = "./"
+    ) -> None:
+        """
+        Save the current model.
+        
+        Args:
+            model_name (str, optional): Model Name
+            path (str, optional): Saving Path
+        
+        Returns:
+            None
+        """
+        model_name = f"{model_name}_{datetime.now().strftime('%d-%m-%y_%H:%M:%S')}.txt"
+        self._model.save_model(os.path.join(path, model_name))
+        
+        return
+                                        
     def preprocess(
         self,
         data: pd.DataFrame,
         target_column: str = None,
-    ) -> Union(Tuple[pd.DataFrame, pd.DataFrame], pd.DataFrame):
+    ) -> Union[Tuple[pd.DataFrame, pd.DataFrame], pd.DataFrame]:
         """
         Prepare raw data for training or predict.
 
@@ -74,11 +139,7 @@ class DelayModel:
             Tuple[pd.DataFrame, pd.DataFrame]: features and target.
             or
             pd.DataFrame: features.
-        """
-        data['period_day'] = data['Fecha-I'].apply(self.get_period_day)
-        
-        data['high_season'] = data['Fecha-I'].apply(self.is_high_season)
-        
+        """        
         features = pd.concat([
             pd.get_dummies(data['OPERA'], prefix = 'OPERA'),
             pd.get_dummies(data['TIPOVUELO'], prefix = 'TIPOVUELO'), 
@@ -91,11 +152,15 @@ class DelayModel:
             data['min_diff'] = data.apply(self.get_min_diff, axis = 1)
             threshold_in_minutes = 15
             data['delay'] = np.where(data['min_diff'] > threshold_in_minutes, 1, 0)
-            target = data['target_column']
-            return features, target
+            target = data[[target_column]]
+            return features[self.top_10_features], target
+            
+        # If incomplete data
+        add_cols = [col for col in self.top_10_features if col not in features.columns]
+        features.loc[:, add_cols] = 0
         
         # Predict Default
-        return features
+        return features[self.top_10_features]
 
     def fit(
         self,
@@ -109,13 +174,13 @@ class DelayModel:
             features (pd.DataFrame): preprocessed data.
             target (pd.DataFrame): target.
         """
-        if not self._model:
-            self.create_model(target)
+        self.set_model(target) #For Scaling
         
         x_train = features
         y_train = target
         
         self._model.fit(x_train, y_train)
+        self.fitted_model = True
         
         return
 
@@ -132,96 +197,71 @@ class DelayModel:
         Returns:
             (List[int]): predicted targets.
         """
-        x_test = features
+        if not self.fitted_model:
+            self.load_from_weights("./challenge/MODEL.txt")
         
-        y_preds = self._model.predict(x_test)
-        #y_preds = [1 if y_pred > 0.5 else 0 for y_pred in y_preds]
+        y_preds = self._model.predict(features)
+        y_preds = [1 if y_pred > 0.5 else 0 for y_pred in y_preds]
+        
         return y_preds
-        
+                
     @staticmethod
-    def get_period_day(
-        date: str
-    ) -> str: 
+    def get_min_diff(
+        data: pd.DataFrame,
+        columns: List[str] = ['Fecha-O', 'Fecha-I']
+    ) -> np.float64:
         """
-        Get day time period [mañana|tarde|noche]
+        Get difference in minutes.
         
         Args:
-            date (str): Date and time [%Y-%m-%d %H:%M:%S]
+            data (pd.DataFrame): raw data.
+            columns (List[str], optional): Columns to substract. 
+                                           Default: ['Fecha-O', 'Fecha-I']
             
         Returns:
-            (str): day time period [mañana|tarde|noche]
+            (np.float64): Difference in minutes.
         """
-        date_time = datetime.strptime(date, '%Y-%m-%d %H:%M:%S').time()
-        morning_min = datetime.strptime("05:00", '%H:%M').time()
-        morning_max = datetime.strptime("11:59", '%H:%M').time()
-        afternoon_min = datetime.strptime("12:00", '%H:%M').time()
-        afternoon_max = datetime.strptime("18:59", '%H:%M').time()
-        evening_min = datetime.strptime("19:00", '%H:%M').time()
-        evening_max = datetime.strptime("23:59", '%H:%M').time()
-        night_min = datetime.strptime("00:00", '%H:%M').time()
-        night_max = datetime.strptime("4:59", '%H:%M').time()
-        
-        if(date_time > morning_min and date_time < morning_max):
-            return 'mañana'
-        elif(date_time > afternoon_min and date_time < afternoon_max):
-            return 'tarde'
-        elif(
-            (date_time > evening_min and date_time < evening_max) or
-            (date_time > night_min and date_time < night_max)
-        ):
-            return 'noche'
+        assert len(columns) == 2, \
+                        f'get_min_diff recieves exactly 2 arguments, not {len(columns)}'
+        fecha_o = datetime.strptime(data[columns[0]], '%Y-%m-%d %H:%M:%S')
+        fecha_i = datetime.strptime(data[columns[1]], '%Y-%m-%d %H:%M:%S')
+        min_diff = ((fecha_o - fecha_i).total_seconds())/60
+        return min_diff
             
-        @staticmethod
-        def is_high_season(
-            fecha: str
-        ) -> np.int64:
-            """
-            Get if in high season.
-            
-            Args:
-                fecha (str): Date and time [%Y-%m-%d %H:%M:%S]
-                
-            Returns:
-                (np.int64): High seson [1] or Low season [0]
-            """
-            fecha_año = int(fecha.split('-')[0])
-            fecha = datetime.strptime(fecha, '%Y-%m-%d %H:%M:%S')
-            range1_min = datetime.strptime('15-Dec', '%d-%b').replace(year = fecha_año)
-            range1_max = datetime.strptime('31-Dec', '%d-%b').replace(year = fecha_año)
-            range2_min = datetime.strptime('1-Jan', '%d-%b').replace(year = fecha_año)
-            range2_max = datetime.strptime('3-Mar', '%d-%b').replace(year = fecha_año)
-            range3_min = datetime.strptime('15-Jul', '%d-%b').replace(year = fecha_año)
-            range3_max = datetime.strptime('31-Jul', '%d-%b').replace(year = fecha_año)
-            range4_min = datetime.strptime('11-Sep', '%d-%b').replace(year = fecha_año)
-            range4_max = datetime.strptime('30-Sep', '%d-%b').replace(year = fecha_año)
-            
-            if ((fecha >= range1_min and fecha <= range1_max) or 
-                (fecha >= range2_min and fecha <= range2_max) or 
-                (fecha >= range3_min and fecha <= range3_max) or
-                (fecha >= range4_min and fecha <= range4_max)):
-                return 1
-            else:
-                return 0
-                
-        @staticmethod
-        def get_min_diff(
-            data: pd.DataFrame,
-            columns: List[str] = ['Fecha-O', 'Fecha-I']
-        ) -> np.float64:
-            """
-            Get difference in minutes.
-            
-            Args:
-                data (pd.DataFrame): raw data.
-                columns (List[str], optional): Columns to substract. 
-                                               Default: ['Fecha-O', 'Fecha-I']
-                
-            Returns:
-                (np.float64): Difference in minutes.
-            """
-            assert len(columns) = 2, 
-                f'get_min_diff recieves exactly 2 arguments, not {len(columns)}'
-            fecha_o = datetime.strptime(data[columns[0]], '%Y-%m-%d %H:%M:%S')
-            fecha_i = datetime.strptime(data[columns[1]], '%Y-%m-%d %H:%M:%S')
-            min_diff = ((fecha_o - fecha_i).total_seconds())/60
-            return min_diff
+if __name__ == "__main__":
+    data_path = "../data/data.csv"
+    data = pd.read_csv('../data/data.csv')
+    
+    model = DelayModel()
+    features, target = model.preprocess(data, "delay")
+    
+    FEATURES_COLS = [
+        "OPERA_Latin American Wings", 
+        "MES_7",
+        "MES_10",
+        "OPERA_Grupo LATAM",
+        "MES_12",
+        "TIPOVUELO_I",
+        "MES_4",
+        "MES_11",
+        "OPERA_Sky Airline",
+        "OPERA_Copa Air"
+    ]
+
+    TARGET_COL = [
+        "delay"
+    ]
+    
+    print(isinstance(features, pd.DataFrame))
+    print(features.shape[1] == len(FEATURES_COLS))
+    print(set(features.columns) == set(FEATURES_COLS))
+
+    print(isinstance(target, pd.DataFrame))
+    print(target.shape[1] == len(TARGET_COL))
+    print(set(target.columns) == set(TARGET_COL))
+    
+    print(data["OPERA"])
+    
+    model.fit(features, target)
+    
+    predictions = model.predict(features)
