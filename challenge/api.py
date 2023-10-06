@@ -1,7 +1,7 @@
 import fastapi
 import pandas as pd
 
-from .model import DelayModel
+from model import DelayModel
 
 app = fastapi.FastAPI()
 
