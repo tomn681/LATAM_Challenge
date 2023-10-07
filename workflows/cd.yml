@@ -1,7 +1,25 @@
 name: 'Continuous Delivery'
 
 on:
-  ...
+  push:
+    branches:
+      - main
 
 jobs:
-  ...
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up SSH keys (if needed)
+        run: ssh-keyscan server.example.com >> ~/.ssh/known_hosts
+             ssh-add ~/.ssh/id_rsa
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SERVICE_ACCOUNT_KEY }}
+
+      - name: Deploy to production
+        run: scp -r ./app user@server.example.com:/path/to/deployment
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SERVICE_ACCOUNT_KEY }}
